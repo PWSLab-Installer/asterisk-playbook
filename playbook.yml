@@ -1,0 +1,142 @@
+- hosts: localhost
+  connection: local
+  vars:
+    
+    asterisk_version: 16
+  
+
+  tasks:
+    
+    -   name: Check the version of Releases
+        command: hostnamectl
+        register: os_check
+        ignore_errors: yes
+
+    -   name: Update apt cache.
+        apt: update_cache=yes cache_valid_time=600
+        when: ansible_os_family == 'Debian'
+
+    -   name: Install dependencies.
+        package:
+            name:
+                - curl
+                - unzip
+                - wget
+                - subversion
+
+    -   name: Install Build essentials - Ubuntu
+        apt:
+          name: "{{ item }}"
+          state: present
+        loop:
+          - build-essential 
+          - subversion
+          - libedit-dev
+          - uuid-dev
+          - libxml2-dev
+          - libnewt-dev 
+          - libssl-dev 
+          - libncurses5-dev 
+          - libsqlite3-dev 
+          - build-essential 
+          - libjansson-dev 
+        when:
+          - os_check.stdout | regex_search("Ubuntu")
+
+    -   name: Install Build essentials - CentOS
+        shell: yum -y groupinstall core base "Development Tools"
+        when:
+          - os_check.stdout | regex_search("CentOS")
+
+    -   name: Disable SELinux
+        selinux:
+            state: disabled
+        when:
+            - os_check.stdout | regex_search("CentOS") 
+
+    -   name: Get Asterisk - Ubuntu
+        get_url:
+          url: http://downloads.asterisk.org/pub/telephony/asterisk/asterisk-{{ asterisk_version }}-current.tar.gz
+          dest: /tmp
+
+    -   name: Extract Asterisk 
+        unarchive:
+            src: /tmp/asterisk-{{ asterisk_version }}-current.tar.gz
+            dest: /usr/src
+
+    -   shell: ls -d /usr/src/asterisk-{{ asterisk_version }}.*
+        register: dir_name
+
+    -   name: Install Asterisk dependencies I
+        shell: contrib/scripts/get_mp3_source.sh
+        args:
+          chdir: "{{ dir_name.stdout }}"
+
+    -   name: Install Asterisk dependencies II
+        shell: contrib/scripts/install_prereq install
+        args:
+          chdir: "{{ dir_name.stdout }}"
+
+    -   name: Get libedit - CentOS 8
+        get_url: 
+            url: http://thrysoee.dk/editline/libedit-20190324-3.1.tar.gz
+            dest: /tmp
+        when:
+            - os_check.stdout | regex_search("CentOS Linux 8")
+
+    -   name: Extract libedit - CentOS 8 
+        unarchive:
+            src: /tmp/libedit-20190324-3.1.tar.gz
+            dest: /tmp
+        when:
+            - os_check.stdout | regex_search("CentOS Linux 8")
+
+    -   name: Install libedit
+        shell: ./configure && make && make install
+        args:
+          chdir: /tmp/libedit-20190324-3.1
+        when:
+            - os_check.stdout | regex_search("CentOS Linux 8")
+
+    -   name: Build Asterisk from tarball
+        command: "{{ item }} chdir={{ dir_name.stdout }}"
+        with_items:
+          - ./configure 
+          - make menuselect.makeopts
+          - sed -i -e 's/res_snmp//' menuselect.makeopts
+          - sed -i -e 's/chan_sip//' menuselect.makeopts
+          - sed -i -e 's/res_http_websocket//' menuselect.makeopts
+          - make
+          - make uninstall
+          - make install
+          - make config
+          - make samples
+        when:
+            - not os_check.stdout | regex_search("CentOS Linux 7") 
+
+
+    -   name: Build Asterisk from tarball - CentOS 7
+        command: "{{ item }} chdir={{ dir_name.stdout }}"
+        with_items:
+          - ./configure --with-jansson-bundled
+          - make menuselect.makeopts
+          - sed -i -e 's/res_snmp//' menuselect.makeopts
+          - sed -i -e 's/chan_sip//' menuselect.makeopts
+          - sed -i -e 's/res_http_websocket//' menuselect.makeopts
+          - make
+          - make uninstall
+          - make install
+          - make config
+          - make samples
+        when:
+            - os_check.stdout | regex_search("CentOS Linux 7") 
+
+    -   name: Start Asterisk
+        systemd: 
+          name: asterisk
+          state: started
+          enabled: yes
+
+    
+
+    
